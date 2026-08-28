@@ -47,7 +47,8 @@
       border: 1px solid var(--border); border-radius: 6px;
       background: var(--bg2); padding: 10px; margin-bottom: 10px;
     }
-    .ver-head { display: flex; gap: 8px; margin-bottom: 8px; }
+    .ver-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .ver-head .v-enabled { width: auto; flex: 0 0 auto; margin: 0; }
     .ver-head .v-name { flex: 1; }
     .ver-card input[type=text], .ver-card select {
       width: 100%; padding: 6px 8px; border: 1px solid var(--border);
@@ -134,7 +135,7 @@
   </div>
 
   <div class="field">
-    <label>交付版本（可增删，每个版本独立配置预设/音轨/目录）</label>
+    <label>交付版本（勾选「启用」才参与导出，可增删）</label>
     <div id="versions-wrap"></div>
     <button id="btn-add-version" class="btn-add">＋ 添加版本</button>
   </div>
@@ -155,7 +156,7 @@
   </div>
 
   <div class="log" id="log"></div>
-  <div class="hint">说明：每个版本独立配置（名称 / 预设 / 音轨模式 / 输出目录），配置自动记住。成片保持「不静音」，去音乐版本选「静音非保留轨」并勾选要保留的人声轨。字幕 srt 保留手动导出。</div>
+  <div class="hint">说明：每个版本独立配置（启用 / 名称 / 预设 / 音轨模式 / 输出目录），配置自动记住。只勾选单个版本即单独导出；成片保持「不静音」，去音乐版本选「静音非保留轨」并勾选要保留的人声轨。字幕 srt 保留手动导出。</div>
 
   <script src="js/CSInterface.js"></script>
   <script src="js/main.js"></script>

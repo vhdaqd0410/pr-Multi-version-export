@@ -187,9 +187,9 @@
 
   function defaultVersions() {
     return [
-      { id: genId(), name: '成片', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '' },
-      { id: genId(), name: '无字幕', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '' },
-      { id: genId(), name: '无音乐无字幕', preset: '', muteMode: 'mute', keepList: [0, 1], outDir: '' }
+      { id: genId(), name: '成片', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '', enabled: true },
+      { id: genId(), name: '无字幕', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '', enabled: true },
+      { id: genId(), name: '无音乐无字幕', preset: '', muteMode: 'mute', keepList: [0, 1], outDir: '', enabled: true }
     ];
   }
   function loadVersions() {
@@ -203,6 +203,7 @@
             if (!v.muteMode) v.muteMode = 'none';
             if (!v.keepList) v.keepList = [0, 1];
             if (!v.outDir) v.outDir = '';
+            if (v.enabled === undefined) v.enabled = true;
           });
           return arr;
         }
@@ -229,9 +230,15 @@
     card.className = 'ver-card';
     card.setAttribute('data-id', v.id);
 
-    // 头部：版本名 + 删除
+    // 头部：启用勾选 + 版本名 + 删除
     var head = document.createElement('div');
     head.className = 'ver-head';
+    var enCheck = document.createElement('input');
+    enCheck.type = 'checkbox';
+    enCheck.className = 'v-enabled';
+    enCheck.title = '取消勾选则该版本不参与本次导出';
+    enCheck.checked = (v.enabled !== false);
+    head.appendChild(enCheck);
     var nameInput = document.createElement('input');
     nameInput.type = 'text';
     nameInput.className = 'v-name';
@@ -345,7 +352,7 @@
   }
 
   function addVersion() {
-    versions.push({ id: genId(), name: '新版本', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '' });
+    versions.push({ id: genId(), name: '新版本', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '', enabled: true });
     saveVersions();
     renderVersions();
     setLog('已添加新版本，请配置名称/预设/目录');
@@ -357,6 +364,10 @@
     saveVersions();
     renderVersions();
     setLog('已删除版本');
+  }
+  // 本次参与导出的版本（勾选了启用复选框的）
+  function enabledVersions() {
+    return versions.filter(function (v) { return v.enabled !== false; });
   }
 
   // ── 输出目录浏览（修乱码：结果写 UTF-8 文件再读回） ──
@@ -418,10 +429,11 @@
 
   // ── 构建每个版本的输出目标（处理目录冲突） ────
   function buildOutputs(seqName) {
-    var dirs = versions.map(function (v) { return v.outDir; });
+    var evs = enabledVersions();
+    var dirs = evs.map(function (v) { return v.outDir; });
     var seen = {};
     dirs.forEach(function (d) { seen[d] = (seen[d] || 0) + 1; });
-    return versions.map(function (v) {
+    return evs.map(function (v) {
       var ext = inferExtFromPreset(v.preset);
       var name = (seen[v.outDir] > 1) ? (seqName + '_' + v.name) : seqName;
       return { dir: v.outDir, file: name + '.' + ext };
@@ -430,7 +442,8 @@
 
   // ── 单个序列：按版本列表依次导出 ──────────────
   async function exportOneSequence(seqName, onProgress) {
-    var totalV = versions.length;
+    var evs = enabledVersions();
+    var totalV = evs.length;
     function rep(p, t) { if (onProgress) onProgress(p, '[' + seqName + '] ' + t); }
     var muted = false;
     async function unmute() { if (muted) { try { await evalHost('meUnmuteAll()'); } catch (_) {} muted = false; } }
@@ -441,13 +454,13 @@
       if (act.indexOf('OK:') !== 0) return { ok: false, err: '激活序列失败：' + act };
 
       var outs = buildOutputs(seqName);
-      versions.forEach(function (v, i) {
+      evs.forEach(function (v, i) {
         if (outs[i].dir) fs.mkdirSync(outs[i].dir, { recursive: true });
       });
 
       for (var i = 0; i < totalV; i++) {
         if (stopRequested) { await unmute(); return { stopped: true }; }
-        var v = versions[i];
+        var v = evs[i];
         var o = outs[i];
         var f = path.join(o.dir, o.file);
         var base = (i / totalV) * 100;
@@ -485,11 +498,12 @@
   async function runExport() {
     var seqs = getCheckedSeqs();
     if (seqs.length === 0) { setLog('请至少勾选一个序列', true); return; }
-    if (versions.length === 0) { setLog('请至少添加一个版本', true); return; }
+    var evs = enabledVersions();
+    if (evs.length === 0) { setLog('请至少启用一个版本（勾选版本卡片前的复选框）', true); return; }
 
-    // 校验每个版本
-    for (var i = 0; i < versions.length; i++) {
-      var v = versions[i];
+    // 校验每个启用的版本
+    for (var i = 0; i < evs.length; i++) {
+      var v = evs[i];
       if (!v.name) { setLog('第 ' + (i + 1) + ' 个版本缺名称', true); return; }
       if (!v.preset || !fs.existsSync(v.preset)) { setLog('版本「' + v.name + '」导出预设无效', true); return; }
       if (!v.outDir || !fs.existsSync(v.outDir)) { setLog('版本「' + v.name + '」输出目录不存在：' + v.outDir, true); return; }
@@ -578,6 +592,9 @@
     if (!v) return;
     if (e.target.classList.contains('v-preset')) {
       v.preset = e.target.value;
+      saveVersions();
+    } else if (e.target.classList.contains('v-enabled')) {
+      v.enabled = e.target.checked;
       saveVersions();
     } else if (e.target.classList.contains('v-keep-cb')) {
       v.keepList = [];
