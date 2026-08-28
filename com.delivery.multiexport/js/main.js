@@ -386,9 +386,10 @@
     var last = getLastDir();
     var cur = (targetInput && targetInput.value || '').trim();
     var initial = '';
-    if (cur && fs.existsSync(cur)) initial = cur;
-    else if (cur) { var par = path.dirname(cur); if (fs.existsSync(par)) initial = par; }
-    if (!initial && last && fs.existsSync(last)) initial = last;
+    // 优先级：上次记忆的位置 > 当前输入框已有路径。这样选完成片目录后，点其他版本也能直接定位到刚选的路径
+    if (last && fs.existsSync(last)) initial = last;
+    if (!initial && cur && fs.existsSync(cur)) initial = cur;
+    else if (!initial && cur) { var par = path.dirname(cur); if (fs.existsSync(par)) initial = par; }
 
     var inFile = path.join(os.tmpdir(), 'cep_dir_in_' + Date.now() + '_' + Math.floor(Math.random() * 1e6) + '.txt');
     var outFile = path.join(os.tmpdir(), 'cep_dir_out_' + Date.now() + '_' + Math.floor(Math.random() * 1e6) + '.txt');
