@@ -1,0 +1,14 @@
+# 探针/调试脚本（开发过程中临时产物，不入库）
+probe_*.py
+*_probe.py
+*.tmp
+*.log
+
+# 系统文件
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# 编辑器
+.vscode/
+.idea/
