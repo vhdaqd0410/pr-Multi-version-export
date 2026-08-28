@@ -253,10 +253,15 @@
     head.appendChild(delBtn);
     card.appendChild(head);
 
-    // 预设
+    // 预设 + 音轨模式 两列并排
+    var cols = document.createElement('div');
+    cols.className = 'ver-cols';
+
+    var c1 = document.createElement('div');
+    c1.className = 'col';
     var pLab = document.createElement('label');
     pLab.textContent = '导出预设';
-    card.appendChild(pLab);
+    c1.appendChild(pLab);
     var pSel = document.createElement('select');
     pSel.className = 'v-preset';
     fillPresetSelect(pSel, allPresets, ''); // 只填选项，不自动选
@@ -270,22 +275,26 @@
       });
       v.preset = pSel.value || ''; // 回写自动选中的预设，避免导出时校验报“预设无效”
     }
-    card.appendChild(pSel);
+    c1.appendChild(pSel);
+    cols.appendChild(c1);
 
-    // 音轨模式
+    var c2 = document.createElement('div');
+    c2.className = 'col';
     var mLab = document.createElement('label');
     mLab.textContent = '音轨模式';
-    card.appendChild(mLab);
+    c2.appendChild(mLab);
     var mSel = document.createElement('select');
     mSel.className = 'v-mute';
     var o1 = document.createElement('option');
-    o1.value = 'none'; o1.textContent = '不静音（全轨道）';
+    o1.value = 'none'; o1.textContent = '不静音';
     var o2 = document.createElement('option');
-    o2.value = 'mute'; o2.textContent = '静音非保留轨（去音乐）';
+    o2.value = 'mute'; o2.textContent = '静音非保留轨';
     mSel.appendChild(o1);
     mSel.appendChild(o2);
     mSel.value = v.muteMode || 'none';
-    card.appendChild(mSel);
+    c2.appendChild(mSel);
+    cols.appendChild(c2);
+    card.appendChild(cols);
 
     // 输出目录
     var dLab = document.createElement('label');
@@ -386,27 +395,32 @@
     var last = getLastDir();
     var cur = (targetInput && targetInput.value || '').trim();
     var initial = '';
-    // 优先级：上次记忆的位置 > 当前输入框已有路径。这样选完成片目录后，点其他版本也能直接定位到刚选的路径
     if (last && fs.existsSync(last)) initial = last;
     if (!initial && cur && fs.existsSync(cur)) initial = cur;
     else if (!initial && cur) { var par = path.dirname(cur); if (fs.existsSync(par)) initial = par; }
 
     var inFile = path.join(os.tmpdir(), 'cep_dir_in_' + Date.now() + '_' + Math.floor(Math.random() * 1e6) + '.txt');
     var outFile = path.join(os.tmpdir(), 'cep_dir_out_' + Date.now() + '_' + Math.floor(Math.random() * 1e6) + '.txt');
-    // 把初始位置写进 UTF-8 文件，PowerShell 读回，避免中文路径拼命令行转义
-    fs.writeFileSync(inFile, initial, 'utf8');
+    // ini 文件存 JSON（path + title），UTF-8，避开中文命令行转义
+    fs.writeFileSync(inFile, JSON.stringify({ path: initial, title: '选择输出目录' }), 'utf8');
 
-    var ps = [
-      'Add-Type -AssemblyName System.Windows.Forms',
-      '$d = New-Object System.Windows.Forms.FolderBrowserDialog',
-      '$d.Description = "选择输出目录"',
-      '$ini = "' + inFile + '"',
-      'if (Test-Path $ini) { $sp = [System.IO.File]::ReadAllText($ini, [System.Text.Encoding]::UTF8); if ($sp -and (Test-Path $sp)) { $d.SelectedPath = $sp } }',
-      'if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {',
-      '  [System.IO.File]::WriteAllText("' + outFile + '", $d.SelectedPath, [System.Text.Encoding]::UTF8)',
-      '}'
-    ].join(';');
-    var cmd = 'powershell -NoProfile -STA -Command "' + ps.replace(/"/g, '\\"') + '"';
+    // 定位扩展根目录（folderpicker.ps1 所在位置）：
+    // 1) getSystemPath('extension') 返回 file:/// URI，解析成绝对路径
+    // 2) __dirname 回退：main.js 在 js/ 下，扩展根是其父目录
+    var extRoot = '';
+    try { extRoot = csInterface.getSystemPath('extension'); } catch (_) {}
+    if (!extRoot || !fs.existsSync(path.join(extRoot, 'jsx', 'folderpicker.ps1'))) {
+      try {
+        var d = (typeof __dirname !== 'undefined') ? __dirname : '';
+        if (d) {
+          var root = (path.basename(d).toLowerCase() === 'js') ? path.dirname(d) : d;
+          if (fs.existsSync(path.join(root, 'jsx', 'folderpicker.ps1'))) extRoot = root;
+        }
+      } catch (_) {}
+    }
+    var psPath = path.join(extRoot || '', 'jsx', 'folderpicker.ps1');
+
+    var cmd = 'powershell -NoProfile -STA -ExecutionPolicy Bypass -File "' + psPath + '" -Ini "' + inFile + '" -Out "' + outFile + '"';
     require('child_process').exec(cmd, { windowsHide: true }, function (err) {
       try { fs.unlinkSync(inFile); } catch (_) {}
       if (err) { setLog('打开目录选择失败：' + err.message, true); return; }
@@ -417,7 +431,6 @@
           if (p) {
             targetInput.value = p;
             setLastDir(p);
-            // 回写版本数据（浏览按钮是程序赋值，不触发 input 事件，需手动同步 v.outDir）
             var card = targetInput.closest('.ver-card');
             if (card) {
               var vv = findVersion(card.getAttribute('data-id'));
@@ -545,7 +558,7 @@
 
     stopRequested = false;
     setBusy(true);
-    progressArea.style.display = '';
+    progressArea.style.display = 'block';
     var totalSeq = seqs.length;
     var startTime = Date.now();
     var doneSeq = 0;
