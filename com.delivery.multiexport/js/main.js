@@ -16,22 +16,13 @@
 
   var csInterface = new CSInterface();
   function evalHost(s) { return new Promise(function (r) { csInterface.evalScript(s, r); }); }
-  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
   // ── UI 元素 ──────────────────────────────────
   var seqList = document.getElementById('seq-list');
   var btnSelAll = document.getElementById('btn-sel-all');
   var btnSelNone = document.getElementById('btn-sel-none');
-  var dirCaption = document.getElementById('dir-caption');
-  var dirNoCaption = document.getElementById('dir-no-caption');
-  var dirNoMusic = document.getElementById('dir-no-music');
-  var presetCaption = document.getElementById('preset-caption');
-  var presetNoCaption = document.getElementById('preset-no-caption');
-  var keepMode = document.getElementById('keep-mode');
-  var keepCountRow = document.getElementById('keep-count-row');
-  var keepCountEl = document.getElementById('keep-count');
-  var keepListRow = document.getElementById('keep-list-row');
-  var keepListEl = document.getElementById('keep-list');
+  var versionsWrap = document.getElementById('versions-wrap');
+  var btnAddVersion = document.getElementById('btn-add-version');
   var log = document.getElementById('log');
   var btnGo = document.getElementById('btn-go');
   var btnStop = document.getElementById('btn-stop');
@@ -43,9 +34,15 @@
   var progressTime = document.getElementById('progress-time');
   var progressState = document.getElementById('progress-state');
 
-  // 停止控制
+  // ── 全局状态 ──────────────────────────────────
   var stopRequested = false;
+  var allSeqs = [];
+  var audioTracks = [];
+  var allPresets = [];
+  var versions = [];     // 交付版本列表（每个版本独立配置）
+  var uidSeq = 0;
 
+  // ── 基础 UI 工具 ──────────────────────────────
   function setLog(msg, isErr) {
     var line = document.createElement('div');
     line.className = isErr ? 'log-line err' : 'log-line';
@@ -111,15 +108,13 @@
   }
 
   function refreshPresets() {
-    var presets = scanPresets();
-    fillPresetSelect(presetCaption, presets, '有字幕');
-    fillPresetSelect(presetNoCaption, presets, '无字幕');
-    if (presets.length === 0) {
+    allPresets = scanPresets();
+    if (allPresets.length === 0) {
       setLog('未扫描到 AME 导出预设（.epr），请手动输入完整路径', true);
     } else {
-      setLog('已扫描到 ' + presets.length + ' 个导出预设');
+      setLog('已扫描到 ' + allPresets.length + ' 个导出预设');
     }
-    return presets;
+    return allPresets;
   }
 
   // ── 从 .epr 推断容器格式后缀 ──────────────────
@@ -147,7 +142,6 @@
   }
 
   // ── 序列列表 ──────────────────────────────────
-  var allSeqs = [];
   function renderSeqList() {
     seqList.innerHTML = '';
     allSeqs.forEach(function (s) {
@@ -156,7 +150,6 @@
       var cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.value = s.name;
-      // 默认选中纯数字命名序列
       if (/^\d+$/.test(s.name)) cb.checked = true;
       var span = document.createElement('span');
       span.textContent = s.name;
@@ -180,36 +173,190 @@
     setLog('已加载 ' + allSeqs.length + ' 个序列');
   }
 
-  // ── 音轨保留选项 ──────────────────────────────
-  var audioTracks = [];
-  function renderKeepList() {
-    keepListEl.innerHTML = '';
-    audioTracks.forEach(function (t) {
-      var lab = document.createElement('label');
-      lab.className = 'track-item';
-      var cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.value = String(t.index);
-      if (t.index < 2) cb.checked = true;
-      var span = document.createElement('span');
-      span.textContent = 'A' + (t.index + 1) + (t.name ? ' · ' + t.name : '');
-      lab.appendChild(cb);
-      lab.appendChild(span);
-      keepListEl.appendChild(lab);
-    });
-  }
-  function getKeepList() {
-    var out = [];
-    keepListEl.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
-      if (cb.checked) out.push(parseInt(cb.value, 10));
-    });
-    return out;
-  }  async function refreshAudioTracks() {
+  // ── 音轨结构（全局一份，供每个版本的保留列表渲染） ──
+  async function refreshAudioTracks() {
     var r = await evalHost('meListAudioTracks()');
     if (r.indexOf('OK:') !== 0) { setLog('读取音轨失败：' + r, true); return; }
     audioTracks = JSON.parse(r.slice(3));
-    renderKeepList();
     setLog('已加载 ' + audioTracks.length + ' 条音频轨');
+    renderVersions(); // 音轨结构变了，重渲版本卡片里的保留列表
+  }
+
+  // ── 版本数据（持久化到 localStorage） ─────────
+  function genId() { return 'v' + (++uidSeq) + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7); }
+
+  function defaultVersions() {
+    return [
+      { id: genId(), name: '成片', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '' },
+      { id: genId(), name: '无字幕', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '' },
+      { id: genId(), name: '无音乐无字幕', preset: '', muteMode: 'mute', keepList: [0, 1], outDir: '' }
+    ];
+  }
+  function loadVersions() {
+    try {
+      var raw = localStorage.getItem('pr_me_versions_v1');
+      if (raw) {
+        var arr = JSON.parse(raw);
+        if (Array.isArray(arr) && arr.length > 0) {
+          arr.forEach(function (v) {
+            if (!v.id) v.id = genId();
+            if (!v.muteMode) v.muteMode = 'none';
+            if (!v.keepList) v.keepList = [0, 1];
+            if (!v.outDir) v.outDir = '';
+          });
+          return arr;
+        }
+      }
+    } catch (_) {}
+    return defaultVersions();
+  }
+  function saveVersions() {
+    try { localStorage.setItem('pr_me_versions_v1', JSON.stringify(versions)); } catch (_) {}
+  }
+  function findVersion(id) {
+    for (var i = 0; i < versions.length; i++) if (versions[i].id === id) return versions[i];
+    return null;
+  }
+
+  // ── 渲染版本卡片 ──────────────────────────────
+  function toggleKeep(card) {
+    var m = card.querySelector('.v-mute').value;
+    card.querySelector('.v-keep').style.display = (m === 'mute') ? '' : 'none';
+  }
+
+  function createVersionCard(v) {
+    var card = document.createElement('div');
+    card.className = 'ver-card';
+    card.setAttribute('data-id', v.id);
+
+    // 头部：版本名 + 删除
+    var head = document.createElement('div');
+    head.className = 'ver-head';
+    var nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'v-name';
+    nameInput.placeholder = '版本名';
+    nameInput.value = v.name;
+    head.appendChild(nameInput);
+    var delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'v-del';
+    delBtn.textContent = '删除';
+    delBtn.title = '删除此版本';
+    head.appendChild(delBtn);
+    card.appendChild(head);
+
+    // 预设
+    var pLab = document.createElement('label');
+    pLab.textContent = '导出预设';
+    card.appendChild(pLab);
+    var pSel = document.createElement('select');
+    pSel.className = 'v-preset';
+    var keyword = v.name.indexOf('无字幕') >= 0 ? '无字幕' : '有字幕';
+    if (v.preset && allPresets.some(function (p) { return p.full === v.preset; })) {
+      fillPresetSelect(pSel, allPresets, '');
+      pSel.value = v.preset;
+    } else {
+      fillPresetSelect(pSel, allPresets, keyword);
+    }
+    card.appendChild(pSel);
+
+    // 音轨模式
+    var mLab = document.createElement('label');
+    mLab.textContent = '音轨模式';
+    card.appendChild(mLab);
+    var mSel = document.createElement('select');
+    mSel.className = 'v-mute';
+    var o1 = document.createElement('option');
+    o1.value = 'none'; o1.textContent = '不静音（全轨道）';
+    var o2 = document.createElement('option');
+    o2.value = 'mute'; o2.textContent = '静音非保留轨（去音乐）';
+    mSel.appendChild(o1);
+    mSel.appendChild(o2);
+    mSel.value = v.muteMode || 'none';
+    card.appendChild(mSel);
+
+    // 输出目录
+    var dLab = document.createElement('label');
+    dLab.textContent = '输出目录';
+    card.appendChild(dLab);
+    var dirRow = document.createElement('div');
+    dirRow.className = 'dir-row';
+    var dirInput = document.createElement('input');
+    dirInput.type = 'text';
+    dirInput.className = 'v-dir';
+    dirInput.placeholder = '例如 D:\\成片';
+    dirInput.value = v.outDir || '';
+    dirRow.appendChild(dirInput);
+    var browseBtn = document.createElement('button');
+    browseBtn.type = 'button';
+    browseBtn.className = 'v-browse';
+    browseBtn.textContent = '浏览…';
+    dirRow.appendChild(browseBtn);
+    card.appendChild(dirRow);
+
+    // 保留音轨列表（仅静音模式显示）
+    var keepWrap = document.createElement('div');
+    keepWrap.className = 'v-keep';
+    var kLab = document.createElement('label');
+    kLab.textContent = '保留音轨（勾选保留，其余静音）';
+    keepWrap.appendChild(kLab);
+    var keepList = document.createElement('div');
+    keepList.className = 'keep-list';
+    if (audioTracks.length === 0) {
+      keepList.innerHTML = '<div class="keep-empty">尚未加载音轨，点「刷新」</div>';
+    } else {
+      audioTracks.forEach(function (t) {
+        var lab = document.createElement('label');
+        lab.className = 'track-item';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'v-keep-cb';
+        cb.value = String(t.index);
+        if (v.keepList.indexOf(t.index) >= 0) cb.checked = true;
+        var span = document.createElement('span');
+        span.textContent = 'A' + (t.index + 1) + (t.name ? ' · ' + t.name : '');
+        lab.appendChild(cb);
+        lab.appendChild(span);
+        keepList.appendChild(lab);
+      });
+    }
+    keepWrap.appendChild(keepList);
+    card.appendChild(keepWrap);
+
+    // 事件
+    delBtn.addEventListener('click', function () { removeVersion(v.id); });
+    browseBtn.addEventListener('click', function () { browseFolder(dirInput); });
+    mSel.addEventListener('change', function () {
+      v.muteMode = mSel.value;
+      toggleKeep(card);
+      saveVersions();
+    });
+
+    toggleKeep(card);
+    return card;
+  }
+
+  function renderVersions() {
+    versionsWrap.innerHTML = '';
+    versions.forEach(function (v) {
+      versionsWrap.appendChild(createVersionCard(v));
+    });
+  }
+
+  function addVersion() {
+    versions.push({ id: genId(), name: '新版本', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '' });
+    saveVersions();
+    renderVersions();
+    setLog('已添加新版本，请配置名称/预设/目录');
+  }
+
+  function removeVersion(id) {
+    if (versions.length <= 1) { setLog('至少保留一个版本', true); return; }
+    versions = versions.filter(function (v) { return v.id !== id; });
+    saveVersions();
+    renderVersions();
+    setLog('已删除版本');
   }
 
   // ── 输出目录浏览（修乱码：结果写 UTF-8 文件再读回） ──
@@ -269,97 +416,67 @@
     });
   }
 
-  // ── 构建三个版本的输出目标（处理目录冲突） ────
-  // 三个目录独立；若目录有重复，则对应版本文件名加后缀避免覆盖
-  function buildOutputs(seqName, ext) {
-    var dirs = [dirCaption.value.trim(), dirNoCaption.value.trim(), dirNoMusic.value.trim()];
-    var tags = ['成片', '无字幕', '无音乐无字幕'];
+  // ── 构建每个版本的输出目标（处理目录冲突） ────
+  function buildOutputs(seqName) {
+    var dirs = versions.map(function (v) { return v.outDir; });
     var seen = {};
     dirs.forEach(function (d) { seen[d] = (seen[d] || 0) + 1; });
-    var outs = [];
-    for (var i = 0; i < 3; i++) {
-      var name = (seen[dirs[i]] > 1) ? (seqName + '_' + tags[i]) : seqName;
-      outs.push({ dir: dirs[i], file: name + '.' + ext });
-    }
-    return outs;
+    return versions.map(function (v) {
+      var ext = inferExtFromPreset(v.preset);
+      var name = (seen[v.outDir] > 1) ? (seqName + '_' + v.name) : seqName;
+      return { dir: v.outDir, file: name + '.' + ext };
+    });
   }
 
-  // ── 单个序列的导出流程 ───────────────────────
-  // onProgress(percent 0-100, stateText)
-  async function exportOneSequence(seqName, pc, pn, keepList, onProgress) {
-    var steps = [
-      { p: 0, t: '准备' },
-      { p: 8, t: '导出成片' },
-      { p: 40, t: '导出无字幕版' },
-      { p: 72, t: '静音并导出无音乐无字幕版' },
-      { p: 100, t: '完成' }
-    ];
+  // ── 单个序列：按版本列表依次导出 ──────────────
+  async function exportOneSequence(seqName, onProgress) {
+    var totalV = versions.length;
     function rep(p, t) { if (onProgress) onProgress(p, '[' + seqName + '] ' + t); }
+    var muted = false;
+    async function unmute() { if (muted) { try { await evalHost('meUnmuteAll()'); } catch (_) {} muted = false; } }
+
     try {
       rep(0, '准备');
       var act = await evalHost('meActivateSequence(' + JSON.stringify(seqName) + ')');
       if (act.indexOf('OK:') !== 0) return { ok: false, err: '激活序列失败：' + act };
 
-      var ext = inferExtFromPreset(pc);
-      var outs = buildOutputs(seqName, ext);
-      var o1 = outs[0], o2 = outs[1], o3 = outs[2];
+      var outs = buildOutputs(seqName);
+      versions.forEach(function (v, i) {
+        if (outs[i].dir) fs.mkdirSync(outs[i].dir, { recursive: true });
+      });
 
-      fs.mkdirSync(o1.dir, { recursive: true });
-      fs.mkdirSync(o2.dir, { recursive: true });
-      fs.mkdirSync(o3.dir, { recursive: true });
+      for (var i = 0; i < totalV; i++) {
+        if (stopRequested) { await unmute(); return { stopped: true }; }
+        var v = versions[i];
+        var o = outs[i];
+        var f = path.join(o.dir, o.file);
+        var base = (i / totalV) * 100;
+        var span = (1 / totalV) * 100;
 
-      var f1 = path.join(o1.dir, o1.file);
-      var f2 = path.join(o2.dir, o2.file);
-      var f3 = path.join(o3.dir, o3.file);
+        if (v.muteMode === 'mute') {
+          rep(base + 2, '静音非保留轨');
+          var m = await evalHost('meMuteExcept(' + JSON.stringify(v.keepList.join(',')) + ')');
+          if (m.indexOf('OK:') !== 0) return { ok: false, err: '静音失败：' + m };
+          muted = true;
+        }
 
-      // 1. 成片（有字幕预设，全轨道）
-      rep(10, '导出成片');
-      setLog('▶ [' + seqName + '] 成片 → ' + f1);
-      var r1 = await evalHost('meExport(' + JSON.stringify(f1) + ', ' + JSON.stringify(pc) + ', 0)');
-      if (r1.indexOf('OK:') !== 0) return { ok: false, err: '成片提交失败：' + r1 };
-      if (stopRequested) return { stopped: true };
-      await waitForFile(f1, 30 * 60 * 1000, function () { return stopRequested; });
-      if (stopRequested) return { stopped: true };
-      rep(40, '成片完成');
-      setLog('  ✓ 成片完成');
-
-      // 2. 无字幕版（无字幕预设，全轨道）
-      rep(42, '导出无字幕版');
-      setLog('▶ [' + seqName + '] 无字幕版 → ' + f2);
-      var r2 = await evalHost('meExport(' + JSON.stringify(f2) + ', ' + JSON.stringify(pn) + ', 0)');
-      if (r2.indexOf('OK:') !== 0) return { ok: false, err: '无字幕版提交失败：' + r2 };
-      if (stopRequested) return { stopped: true };
-      await waitForFile(f2, 30 * 60 * 1000, function () { return stopRequested; });
-      if (stopRequested) return { stopped: true };
-      rep(72, '无字幕版完成');
-      setLog('  ✓ 无字幕版完成');
-
-      // 3. 无音乐无字幕版（无字幕预设 + 静音非保留轨）
-      rep(74, '静音并导出无音乐无字幕版');
-      setLog('▶ [' + seqName + '] 静音非保留音轨');
-      var m = await evalHost('meMuteExcept(' + JSON.stringify(keepList.join(',')) + ')');
-      if (m.indexOf('OK:') !== 0) return { ok: false, err: '静音失败：' + m };
-      setLog('▶ [' + seqName + '] 无音乐无字幕版 → ' + f3);
-      var r3 = await evalHost('meExport(' + JSON.stringify(f3) + ', ' + JSON.stringify(pn) + ', 0)');
-      if (r3.indexOf('OK:') !== 0) { await evalHost('meUnmuteAll()'); return { ok: false, err: '无音乐无字幕版提交失败：' + r3 }; }
-      if (stopRequested) { await evalHost('meUnmuteAll()'); return { stopped: true }; }
-      await waitForFile(f3, 30 * 60 * 1000, function () { return stopRequested; });
-      if (stopRequested) { await evalHost('meUnmuteAll()'); return { stopped: true }; }
-      setLog('  ✓ 无音乐无字幕版完成');
-
-      // 恢复轨道
-      var um = await evalHost('meUnmuteAll()');
-      if (um.indexOf('OK:') === 0) setLog('  ✓ 已恢复所有音频轨');
-      else setLog('  ⚠ ' + um, true);
+        rep(base + 6, '导出「' + v.name + '」');
+        setLog('▶ [' + seqName + '] ' + v.name + ' → ' + f);
+        var r = await evalHost('meExport(' + JSON.stringify(f) + ', ' + JSON.stringify(v.preset) + ', 0)');
+        if (r.indexOf('OK:') !== 0) { await unmute(); return { ok: false, err: '「' + v.name + '」提交失败：' + r }; }
+        if (stopRequested) { await unmute(); return { stopped: true }; }
+        await waitForFile(f, 30 * 60 * 1000, function () { return stopRequested; });
+        if (stopRequested) { await unmute(); return { stopped: true }; }
+        await unmute();
+        setLog('  ✓ ' + v.name + '完成');
+        rep(base + span - 2, '「' + v.name + '」完成');
+      }
 
       rep(100, '完成');
       return { ok: true };
     } catch (e) {
-      if (e && e.message === '__STOPPED__') {
-        try { await evalHost('meUnmuteAll()'); } catch (_) {}
-        return { stopped: true };
-      }
-      try { await evalHost('meUnmuteAll()'); } catch (_) {}
+      if (e && e.message === '__STOPPED__') { await unmute(); return { stopped: true }; }
+      await unmute();
       return { ok: false, err: e.message };
     }
   }
@@ -368,31 +485,15 @@
   async function runExport() {
     var seqs = getCheckedSeqs();
     if (seqs.length === 0) { setLog('请至少勾选一个序列', true); return; }
+    if (versions.length === 0) { setLog('请至少添加一个版本', true); return; }
 
-    var d1 = dirCaption.value.trim();
-    var d2 = dirNoCaption.value.trim();
-    var d3 = dirNoMusic.value.trim();
-    if (!d1 || !d2 || !d3) { setLog('请填齐三个版本的输出目录', true); return; }
-    if (!fs.existsSync(d1) || !fs.existsSync(d2) || !fs.existsSync(d3)) {
-      [d1, d2, d3].forEach(function (d) { if (!fs.existsSync(d)) setLog('输出目录不存在：' + d, true); });
-      return;
-    }
-
-    var pc = presetCaption.value.trim();
-    var pn = presetNoCaption.value.trim();
-    if (!pc || !pn) { setLog('请确认两个导出预设已选好', true); return; }
-    if (!fs.existsSync(pc)) { setLog('有字幕预设文件不存在：' + pc, true); return; }
-    if (!fs.existsSync(pn)) { setLog('无字幕预设文件不存在：' + pn, true); return; }
-
-    var keepList;
-    if (keepMode.value === 'count') {
-      var keep = parseInt(keepCountEl.value, 10);
-      if (isNaN(keep) || keep < 0) { setLog('保留人声轨数需为 ≥0 的整数', true); return; }
-      keepList = [];
-      for (var i = 0; i < keep; i++) keepList.push(i);
-    } else {
-      keepList = getKeepList();
-      if (keepList.length === 0) { setLog('请至少勾选一条保留音轨（或切换为「按数量」并设为 0）', true); return; }
+    // 校验每个版本
+    for (var i = 0; i < versions.length; i++) {
+      var v = versions[i];
+      if (!v.name) { setLog('第 ' + (i + 1) + ' 个版本缺名称', true); return; }
+      if (!v.preset || !fs.existsSync(v.preset)) { setLog('版本「' + v.name + '」导出预设无效', true); return; }
+      if (!v.outDir || !fs.existsSync(v.outDir)) { setLog('版本「' + v.name + '」输出目录不存在：' + v.outDir, true); return; }
+      if (v.muteMode === 'mute' && v.keepList.length === 0) { setLog('版本「' + v.name + '」选了静音但没勾保留轨', true); return; }
     }
 
     stopRequested = false;
@@ -414,14 +515,11 @@
         var seqName = seqs[k];
         setLog('━━ 开始处理 [' + seqName + '] (' + (k + 1) + '/' + totalSeq + ') ━━');
 
-        var res = await exportOneSequence(seqName, pc, pn, keepList, function (p, t) {
+        var res = await exportOneSequence(seqName, function (p, t) {
           if (stopRequested) return;
           var overall = overallPercent(k, p);
           var elapsed = (Date.now() - startTime) / 1000;
-          var remain = 0;
-          if (overall > 0) {
-            remain = elapsed * (100 - overall) / overall;
-          }
+          var remain = overall > 0 ? elapsed * (100 - overall) / overall : 0;
           setProgress(overall, t, elapsed, remain);
         });
 
@@ -453,28 +551,48 @@
       setLog('⏹ 正在停止…（当前导出完成后中止）', true);
     }
   });
+
+  btnAddVersion.addEventListener('click', addVersion);
+
   btnRefresh.addEventListener('click', async function () {
     refreshPresets();
     await refreshSequences();
     await refreshAudioTracks();
+    renderVersions();
   });
 
-  // 三个目录各自的浏览按钮
-  document.getElementById('btn-browse-caption').addEventListener('click', function () { browseFolder(dirCaption); });
-  document.getElementById('btn-browse-no-caption').addEventListener('click', function () { browseFolder(dirNoCaption); });
-  document.getElementById('btn-browse-no-music').addEventListener('click', function () { browseFolder(dirNoMusic); });
+  // 版本卡片内部 input/change 实时同步到 versions
+  versionsWrap.addEventListener('input', function (e) {
+    var card = e.target.closest('.ver-card');
+    if (!card) return;
+    var v = findVersion(card.getAttribute('data-id'));
+    if (!v) return;
+    if (e.target.classList.contains('v-name')) v.name = e.target.value;
+    else if (e.target.classList.contains('v-dir')) v.outDir = e.target.value;
+    saveVersions();
+  });
+  versionsWrap.addEventListener('change', function (e) {
+    var card = e.target.closest('.ver-card');
+    if (!card) return;
+    var v = findVersion(card.getAttribute('data-id'));
+    if (!v) return;
+    if (e.target.classList.contains('v-preset')) {
+      v.preset = e.target.value;
+      saveVersions();
+    } else if (e.target.classList.contains('v-keep-cb')) {
+      v.keepList = [];
+      card.querySelectorAll('.v-keep-cb:checked').forEach(function (cb) {
+        v.keepList.push(parseInt(cb.value, 10));
+      });
+      saveVersions();
+    }
+  });
 
   btnSelAll.addEventListener('click', function () {
     seqList.querySelectorAll('input[type=checkbox]').forEach(function (cb) { cb.checked = true; });
   });
   btnSelNone.addEventListener('click', function () {
     seqList.querySelectorAll('input[type=checkbox]').forEach(function (cb) { cb.checked = false; });
-  });
-
-  keepMode.addEventListener('change', function () {
-    var isCount = keepMode.value === 'count';
-    keepCountRow.style.display = isCount ? '' : 'none';
-    keepListRow.style.display = isCount ? 'none' : '';
   });
 
   seqList.addEventListener('change', async function () {
@@ -488,7 +606,9 @@
   // ── 初始化 ──────────────────────────────────
   (async function () {
     refreshPresets();
+    versions = loadVersions();
     try { await refreshSequences(); } catch (_) {}
+    try { await refreshAudioTracks(); } catch (_) { renderVersions(); }
     var v = await evalHost('meVersion()');
     if (v) document.getElementById('version').textContent = 'v' + v;
     statusDot.className = 'dot on';
