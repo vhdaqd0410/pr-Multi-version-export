@@ -400,7 +400,7 @@
       '$d = New-Object System.Windows.Forms.FolderBrowserDialog',
       '$d.Description = "选择输出目录"',
       '$ini = "' + inFile + '"',
-      'if (Test-Path $ini) { $sp = Get-Content -Path $ini -Encoding UTF8 -Raw; if ($sp -and (Test-Path $sp)) { $d.SelectedPath = $sp } }',
+      'if (Test-Path $ini) { $sp = [System.IO.File]::ReadAllText($ini, [System.Text.Encoding]::UTF8); if ($sp -and (Test-Path $sp)) { $d.SelectedPath = $sp } }',
       'if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {',
       '  [System.IO.File]::WriteAllText("' + outFile + '", $d.SelectedPath, [System.Text.Encoding]::UTF8)',
       '}'
@@ -416,6 +416,12 @@
           if (p) {
             targetInput.value = p;
             setLastDir(p);
+            // 回写版本数据（浏览按钮是程序赋值，不触发 input 事件，需手动同步 v.outDir）
+            var card = targetInput.closest('.ver-card');
+            if (card) {
+              var vv = findVersion(card.getAttribute('data-id'));
+              if (vv) { vv.outDir = p; saveVersions(); }
+            }
             setLog('已选择输出目录：' + p);
           } else {
             setLog('未选择目录（已取消）');
