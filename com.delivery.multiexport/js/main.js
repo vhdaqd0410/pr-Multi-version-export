@@ -259,12 +259,16 @@
     card.appendChild(pLab);
     var pSel = document.createElement('select');
     pSel.className = 'v-preset';
-    var keyword = v.name.indexOf('无字幕') >= 0 ? '无字幕' : '有字幕';
+    fillPresetSelect(pSel, allPresets, ''); // 只填选项，不自动选
+    // 决定选中值：有已存值则用，否则按关键词自动选并回写
     if (v.preset && allPresets.some(function (p) { return p.full === v.preset; })) {
-      fillPresetSelect(pSel, allPresets, '');
       pSel.value = v.preset;
     } else {
-      fillPresetSelect(pSel, allPresets, keyword);
+      var keyword = v.name.indexOf('无字幕') >= 0 ? '无字幕' : '有字幕';
+      allPresets.forEach(function (p) {
+        if (p.name.indexOf(keyword) >= 0) pSel.value = p.full;
+      });
+      v.preset = pSel.value || ''; // 回写自动选中的预设，避免导出时校验报“预设无效”
     }
     card.appendChild(pSel);
 
@@ -349,6 +353,7 @@
     versions.forEach(function (v) {
       versionsWrap.appendChild(createVersionCard(v));
     });
+    saveVersions(); // 回写 createVersionCard 里自动选中的预设
   }
 
   function addVersion() {
@@ -370,26 +375,47 @@
     return versions.filter(function (v) { return v.enabled !== false; });
   }
 
-  // ── 输出目录浏览（修乱码：结果写 UTF-8 文件再读回） ──
+  // ── 输出目录浏览（修乱码：结果写 UTF-8 文件再读回，并记住上次位置） ──
+  function getLastDir() {
+    try { return localStorage.getItem('pr_me_lastdir') || ''; } catch (_) { return ''; }
+  }
+  function setLastDir(p) {
+    try { localStorage.setItem('pr_me_lastdir', p); } catch (_) {}
+  }
   function browseFolder(targetInput) {
-    var tmpFile = path.join(os.tmpdir(), 'cep_folder_' + Date.now() + '_' + Math.floor(Math.random() * 1e6) + '.txt');
+    var last = getLastDir();
+    var cur = (targetInput && targetInput.value || '').trim();
+    var initial = '';
+    if (cur && fs.existsSync(cur)) initial = cur;
+    else if (cur) { var par = path.dirname(cur); if (fs.existsSync(par)) initial = par; }
+    if (!initial && last && fs.existsSync(last)) initial = last;
+
+    var inFile = path.join(os.tmpdir(), 'cep_dir_in_' + Date.now() + '_' + Math.floor(Math.random() * 1e6) + '.txt');
+    var outFile = path.join(os.tmpdir(), 'cep_dir_out_' + Date.now() + '_' + Math.floor(Math.random() * 1e6) + '.txt');
+    // 把初始位置写进 UTF-8 文件，PowerShell 读回，避免中文路径拼命令行转义
+    fs.writeFileSync(inFile, initial, 'utf8');
+
     var ps = [
       'Add-Type -AssemblyName System.Windows.Forms',
       '$d = New-Object System.Windows.Forms.FolderBrowserDialog',
       '$d.Description = "选择输出目录"',
+      '$ini = "' + inFile + '"',
+      'if (Test-Path $ini) { $sp = Get-Content -Path $ini -Encoding UTF8 -Raw; if ($sp -and (Test-Path $sp)) { $d.SelectedPath = $sp } }',
       'if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {',
-      '  [System.IO.File]::WriteAllText("' + tmpFile + '", $d.SelectedPath, [System.Text.Encoding]::UTF8)',
+      '  [System.IO.File]::WriteAllText("' + outFile + '", $d.SelectedPath, [System.Text.Encoding]::UTF8)',
       '}'
     ].join(';');
     var cmd = 'powershell -NoProfile -STA -Command "' + ps.replace(/"/g, '\\"') + '"';
     require('child_process').exec(cmd, { windowsHide: true }, function (err) {
+      try { fs.unlinkSync(inFile); } catch (_) {}
       if (err) { setLog('打开目录选择失败：' + err.message, true); return; }
       try {
-        if (fs.existsSync(tmpFile)) {
-          var p = fs.readFileSync(tmpFile, 'utf8').trim();
-          try { fs.unlinkSync(tmpFile); } catch (_) {}
+        if (fs.existsSync(outFile)) {
+          var p = fs.readFileSync(outFile, 'utf8').trim();
+          try { fs.unlinkSync(outFile); } catch (_) {}
           if (p) {
             targetInput.value = p;
+            setLastDir(p);
             setLog('已选择输出目录：' + p);
           } else {
             setLog('未选择目录（已取消）');

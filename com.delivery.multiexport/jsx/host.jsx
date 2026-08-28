@@ -1,6 +1,6 @@
 // ============================================================
 // 多版本交付导出 —— 宿主脚本（Premiere Pro 内执行）
-// 版本 3.1.0
+// 版本 3.1.1
 // 依赖：PR 14.0+（原生 JSON 可用）
 //
 // 核心 API（已验证 / 来自 Premiere Pro Scripting Guide）：
@@ -10,7 +10,7 @@
 //   track.name            音轨名称（只读）
 // ============================================================
 
-function meVersion() { return "3.1.0"; }
+function meVersion() { return "3.1.1"; }
 
 // 列出项目里所有序列
 function meListSequences() {
