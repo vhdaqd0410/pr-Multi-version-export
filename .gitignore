@@ -9,6 +9,9 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 
+# 发布包（zip 作为 GitHub Release 资产，不入库）
+*.zip
+
 # 编辑器
 .vscode/
 .idea/
