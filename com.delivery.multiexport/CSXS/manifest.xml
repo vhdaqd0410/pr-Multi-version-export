@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="7.0" ExtensionBundleId="com.delivery.multiexport" ExtensionBundleVersion="1.0.0" ExtensionBundleName="PR 多版本交付导出">
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.delivery.multiexport" ExtensionBundleVersion="3.3.0" ExtensionBundleName="PR 多版本交付导出">
   <ExtensionList>
     <Extension Id="com.delivery.multiexport.panel" Version="1.0.0"/>
   </ExtensionList>

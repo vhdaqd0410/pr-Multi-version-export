@@ -33,6 +33,13 @@
   var progressPct = document.getElementById('progress-pct');
   var progressTime = document.getElementById('progress-time');
   var progressState = document.getElementById('progress-state');
+  var deliveryRoot = document.getElementById('delivery-root');
+  var btnBrowseRoot = document.getElementById('btn-browse-root');
+  var btnAutofill = document.getElementById('btn-autofill');
+  var chkManifest = document.getElementById('chk-manifest');
+  var chkSubtitle = document.getElementById('chk-subtitle');
+  var subtitleDir = document.getElementById('subtitle-dir');
+  var btnBrowseSubtitle = document.getElementById('btn-browse-subtitle');
 
   // ── 全局状态 ──────────────────────────────────
   var stopRequested = false;
@@ -41,12 +48,23 @@
   var allPresets = [];
   var versions = [];     // 交付版本列表（每个版本独立配置）
   var uidSeq = 0;
-
-  // ── 基础 UI 工具 ──────────────────────────────
-  function setLog(msg, isErr) {
+  var manifest = [];    // 交付清单（运行期收集，导出完生成 CSV）  // ── 基础 UI 工具 ──────────────────────────────
+  function setLog(msg, level) {
+    // level: 'info'(默认) | 'success' | 'warn' | 'error' | true(兼容旧代码=error)
+    var lv = 'info';
+    if (level === true || level === 'err' || level === 'error') lv = 'error';
+    else if (level === 'warn' || level === 'warning') lv = 'warn';
+    else if (level === 'success' || level === 'ok') lv = 'success';
     var line = document.createElement('div');
-    line.className = isErr ? 'log-line err' : 'log-line';
-    line.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+    line.className = 'log-line ' + lv;
+    var ts = document.createElement('span');
+    ts.className = 'log-ts';
+    ts.textContent = '[' + new Date().toLocaleTimeString() + '] ';
+    var body = document.createElement('span');
+    body.className = 'log-body';
+    body.textContent = msg;
+    line.appendChild(ts);
+    line.appendChild(body);
     log.appendChild(line);
     log.scrollTop = log.scrollHeight;
   }
@@ -70,6 +88,57 @@
     var t = '已用 ' + fmtTime(elapsedSec || 0);
     if (remainSec !== undefined && remainSec !== null) t += ' · 预计剩余 ' + fmtTime(remainSec);
     progressTime.textContent = t;
+  }
+
+  // ── 交付清单 ────────────────────────────────
+  function fmtSize(bytes) {
+    if (bytes == null || isNaN(bytes)) return '';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+    return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  }
+  function fmtDur(sec) {
+    if (sec == null || isNaN(sec)) return '';
+    sec = Math.round(sec);
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return m + '分' + (s < 10 ? '0' : '') + s + '秒';
+  }
+  function csvEscape(v) {
+    v = String(v == null ? '' : v);
+    if (/[",\n\r]/.test(v)) return '"' + v.replace(/"/g, '""') + '"';
+    return v;
+  }
+  function buildManifestCsv(rows) {
+    var head = ['序列', '版本', '状态', '输出文件', '大小', '时长'];
+    var lines = [head.map(csvEscape).join(',')];
+    rows.forEach(function (r) {
+      lines.push([r.seq, r.version, r.status, r.file, r.size, r.duration].map(csvEscape).join(','));
+    });
+    return '\uFEFF' + lines.join('\r\n');
+  }
+  function writeManifest(rows) {
+    if (rows.length === 0) return;
+    // 清单写在第一个序列第一个版本的输出目录里
+    var first = rows[0];
+    var dir = '';
+    try { if (first.dir) dir = first.dir; } catch (_) {}
+    if (!dir) {
+      try { var ev = enabledVersions()[0]; if (ev && ev.outDir) dir = ev.outDir; } catch (_) {}
+    }
+    if (!dir) { setLog('未找到可写目录，交付清单未生成', true); return; }
+    var stamp = new Date();
+    function p2(x) { return x < 10 ? '0' + x : '' + x; }
+    var ts = stamp.getFullYear() + '-' + p2(stamp.getMonth() + 1) + '-' + p2(stamp.getDate()) + '_' + p2(stamp.getHours()) + '-' + p2(stamp.getMinutes());
+    var csvPath = path.join(dir, '交付清单_' + ts + '.csv');
+    try {
+      fs.writeFileSync(csvPath, buildManifestCsv(rows), 'utf8');
+      setLog('交付清单已生成：' + csvPath, 'success');
+      return csvPath;
+    } catch (e) {
+      setLog('交付清单生成失败：' + e.message, true);
+      return null;
+    }
   }
 
   // ── 扫描 AME 预设目录 ─────────────────────────
@@ -112,7 +181,7 @@
     if (allPresets.length === 0) {
       setLog('未扫描到 AME 导出预设（.epr），请手动输入完整路径', true);
     } else {
-      setLog('已扫描到 ' + allPresets.length + ' 个导出预设');
+      setLog('已扫描到 ' + allPresets.length + ' 个导出预设', 'success');
     }
     return allPresets;
   }
@@ -170,7 +239,7 @@
     if (r.indexOf('OK:') !== 0) { setLog('读取序列失败：' + r, true); return; }
     allSeqs = JSON.parse(r.slice(3));
     renderSeqList();
-    setLog('已加载 ' + allSeqs.length + ' 个序列');
+    setLog('已加载 ' + allSeqs.length + ' 个序列', 'success');
   }
 
   // ── 音轨结构（全局一份，供每个版本的保留列表渲染） ──
@@ -178,7 +247,7 @@
     var r = await evalHost('meListAudioTracks()');
     if (r.indexOf('OK:') !== 0) { setLog('读取音轨失败：' + r, true); return; }
     audioTracks = JSON.parse(r.slice(3));
-    setLog('已加载 ' + audioTracks.length + ' 条音频轨');
+    setLog('已加载 ' + audioTracks.length + ' 条音频轨', 'success');
     renderVersions(); // 音轨结构变了，重渲版本卡片里的保留列表
   }
 
@@ -187,10 +256,18 @@
 
   function defaultVersions() {
     return [
-      { id: genId(), name: '成片', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '', enabled: true },
-      { id: genId(), name: '无字幕', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '', enabled: true },
-      { id: genId(), name: '无音乐无字幕', preset: '', muteMode: 'mute', keepList: [0, 1], outDir: '', enabled: true }
+      { id: genId(), name: '成片', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '', enabled: true, folderKey: '0' },
+      { id: genId(), name: '无字幕', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '', enabled: true, folderKey: '1' },
+      { id: genId(), name: '无音乐无字幕', preset: '', muteMode: 'mute', keepList: [0, 1], outDir: '', enabled: true, folderKey: '2' }
     ];
+  }
+  // 按版本名称推断目录的数字前缀：成片→0、无字幕→1、无音乐无字幕→2
+  function inferFolderKey(name) {
+    name = name || '';
+    if (name.indexOf('无音乐') >= 0 || /bgm/i.test(name)) return '2';
+    if (name.indexOf('无字幕') >= 0) return '1';
+    if (name.indexOf('成片') >= 0) return '0';
+    return '';
   }
   function loadVersions() {
     try {
@@ -204,6 +281,7 @@
             if (!v.keepList) v.keepList = [0, 1];
             if (!v.outDir) v.outDir = '';
             if (v.enabled === undefined) v.enabled = true;
+            if (!v.folderKey) v.folderKey = inferFolderKey(v.name);
           });
           return arr;
         }
@@ -366,10 +444,10 @@
   }
 
   function addVersion() {
-    versions.push({ id: genId(), name: '新版本', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '', enabled: true });
+    versions.push({ id: genId(), name: '新版本', preset: '', muteMode: 'none', keepList: [0, 1], outDir: '', enabled: true, folderKey: '' });
     saveVersions();
     renderVersions();
-    setLog('已添加新版本，请配置名称/预设/目录');
+    setLog('已添加新版本，请配置名称/预设/目录', 'success');
   }
 
   function removeVersion(id) {
@@ -377,7 +455,7 @@
     versions = versions.filter(function (v) { return v.id !== id; });
     saveVersions();
     renderVersions();
-    setLog('已删除版本');
+    setLog('已删除版本', 'success');
   }
   // 本次参与导出的版本（勾选了启用复选框的）
   function enabledVersions() {
@@ -391,7 +469,33 @@
   function setLastDir(p) {
     try { localStorage.setItem('pr_me_lastdir', p); } catch (_) {}
   }
-  function browseFolder(targetInput) {
+
+  // 交付根目录持久化
+  function getDeliveryRoot() {
+    try { return localStorage.getItem('pr_me_delivery_root') || ''; } catch (_) { return ''; }
+  }
+  function setDeliveryRoot(p) {
+    try { localStorage.setItem('pr_me_delivery_root', p); } catch (_) {}
+  }
+  // 字幕配置持久化
+  function getSubtitleCfg() {
+    try {
+      var raw = localStorage.getItem('pr_me_subtitle_cfg');
+      if (raw) return JSON.parse(raw);
+    } catch (_) {}
+    return { enabled: true, dir: '' };
+  }
+  function setSubtitleCfg(cfg) {
+    try { localStorage.setItem('pr_me_subtitle_cfg', JSON.stringify(cfg)); } catch (_) {}
+  }
+  // 清单开关持久化
+  function getManifestCfg() {
+    try { return localStorage.getItem('pr_me_manifest') === '1'; } catch (_) { return true; }
+  }
+  function setManifestCfg(b) {
+    try { localStorage.setItem('pr_me_manifest', b ? '1' : '0'); } catch (_) {}
+  }
+  function browseFolder(targetInput, onPick) {
     var last = getLastDir();
     var cur = (targetInput && targetInput.value || '').trim();
     var initial = '';
@@ -436,7 +540,8 @@
               var vv = findVersion(card.getAttribute('data-id'));
               if (vv) { vv.outDir = p; saveVersions(); }
             }
-            setLog('已选择输出目录：' + p);
+            if (onPick) onPick(p);
+            setLog('已选择输出目录：' + p, 'success');
           } else {
             setLog('未选择目录（已取消）');
           }
@@ -473,6 +578,61 @@
     });
   }
 
+  // ── 收尾 sidecar 字幕文件（1.mp4.srt → 1.srt，并可归位到独立字幕目录） ──
+  // PR 导出 sidecar 字幕时会生成「视频名+扩展名+.srt」如 1.mp4.srt，
+  // 这里把它重命名为「视频名去扩展名+.srt」如 1.srt，再可选移动到字幕目录。
+  function finalizeSidecar(outObj, destDir) {
+    return new Promise(function (resolve) {
+      var stem = path.basename(outObj.file, path.extname(outObj.file)); // 1
+      var sidecar = path.join(outObj.dir, outObj.file + '.srt');        // 1.mp4.srt
+      var sameDir = path.join(outObj.dir, stem + '.srt');               // 同目录 1.srt
+      var start = Date.now();
+      var timeoutMs = 15000;
+      function finish(nameInSameDir) {
+        // 若无独立字幕目录，就留在视频目录；否则移动到 destDir
+        var finalDir = (destDir && fs.existsSync(destDir)) ? destDir : outObj.dir;
+        var finalTarget = path.join(finalDir, stem + '.srt');
+        try {
+          if (fs.existsSync(finalTarget)) fs.unlinkSync(finalTarget);
+          fs.renameSync(nameInSameDir, finalTarget);
+          resolve({ found: true, target: finalTarget });
+        } catch (e) { resolve({ found: true, target: nameInSameDir, err: e.message }); }
+      }
+      function probe() {
+        // 优先探测同目录已改名好的 1.srt（可能上次遗留或 PR 直接生成）
+        if (fs.existsSync(sameDir) && fs.statSync(sameDir).size > 0) {
+          finish(sameDir);
+          return;
+        }
+        var exists = fs.existsSync(sidecar);
+        var sz = 0;
+        try { if (exists) sz = fs.statSync(sidecar).size; } catch (_) {}
+        if (exists && sz > 0) {
+          setTimeout(function () {
+            var sz2 = 0;
+            try { if (fs.existsSync(sidecar)) sz2 = fs.statSync(sidecar).size; } catch (_) {}
+            if (sz2 === sz) {
+              try {
+                fs.renameSync(sidecar, sameDir);
+                finish(sameDir);
+              } catch (e) { resolve({ found: true, target: sidecar, err: e.message }); }
+              return;
+            }
+            if (Date.now() - start > timeoutMs) { resolve({ found: true, target: sidecar, err: '字幕文件持续写入，未重命名' }); return; }
+            probe();
+          }, 1500);
+          return;
+        }
+        if (Date.now() - start > timeoutMs) {
+          resolve({ found: false });
+          return;
+        }
+        setTimeout(probe, 800);
+      }
+      probe();
+    });
+  }
+
   // ── 构建每个版本的输出目标（处理目录冲突） ────
   function buildOutputs(seqName) {
     var evs = enabledVersions();
@@ -490,6 +650,8 @@
   async function exportOneSequence(seqName, onProgress) {
     var evs = enabledVersions();
     var totalV = evs.length;
+    var subtitleEnabled = chkSubtitle.checked;
+    var subtitleOutDir = (subtitleDir.value || '').trim();
     function rep(p, t) { if (onProgress) onProgress(p, '[' + seqName + '] ' + t); }
     var muted = false;
     async function unmute() { if (muted) { try { await evalHost('meUnmuteAll()'); } catch (_) {} muted = false; } }
@@ -498,6 +660,16 @@
       rep(0, '准备');
       var act = await evalHost('meActivateSequence(' + JSON.stringify(seqName) + ')');
       if (act.indexOf('OK:') !== 0) return { ok: false, err: '激活序列失败：' + act };
+
+      // 获取序列时长/尺寸，供交付清单记录
+      var seqDur = '';
+      try {
+        var si = await evalHost('meSeqInfo()');
+        if (si.indexOf('OK:') === 0) {
+          var siObj = JSON.parse(si.slice(3));
+          if (siObj.durationSec != null) seqDur = fmtDur(siObj.durationSec);
+        }
+      } catch (_) {}
 
       var outs = buildOutputs(seqName);
       evs.forEach(function (v, i) {
@@ -526,9 +698,31 @@
         if (stopRequested) { await unmute(); return { stopped: true }; }
         await waitForFile(f, 30 * 60 * 1000, function () { return stopRequested; });
         if (stopRequested) { await unmute(); return { stopped: true }; }
+
+        // 收尾 sidecar 字幕（1.mp4.srt → 1.srt，可归位到独立字幕目录）
+        var srtNote = '';
+        if (subtitleEnabled) {
+          rep(base + span - 4, '收尾字幕文件');
+          var sc = await finalizeSidecar(o, subtitleOutDir);
+          if (sc.found) {
+            srtNote = sc.err ? '（字幕未归位：' + sc.err + '）' : ' + srt';
+            setLog(sc.err ? ('  ⚠ 字幕文件已生成但未归位：' + sc.target) : ('  ✓ 字幕 ' + sc.target), sc.err ? 'warn' : 'success');
+          } else {
+            setLog('  ⚠ 未检测到 sidecar 字幕，请确认无字幕版预设已开启「创建 Sidecar 字幕」', 'warn');
+          }
+        }
+
         await unmute();
-        setLog('  ✓ ' + v.name + '完成');
+        setLog('  ✓ ' + v.name + '完成' + srtNote, 'success');
         rep(base + span - 2, '「' + v.name + '」完成');
+
+        // 记录到交付清单
+        var sz = 0;
+        try { if (fs.existsSync(f)) sz = fs.statSync(f).size; } catch (_) {}
+        manifest.push({
+          seq: seqName, version: v.name, status: '成功',
+          file: f, dir: o.dir, size: fmtSize(sz), duration: seqDur
+        });
       }
 
       rep(100, '完成');
@@ -558,6 +752,7 @@
 
     stopRequested = false;
     setBusy(true);
+    manifest = [];
     progressArea.style.display = 'block';
     var totalSeq = seqs.length;
     var startTime = Date.now();
@@ -583,24 +778,90 @@
           setProgress(overall, t, elapsed, remain);
         });
 
-        if (res.stopped) { setLog('⏹ 已停止（用户中止）', true); break; }
-        if (res.ok) { doneSeq++; setLog('✓ [' + seqName + '] 全部完成'); }
-        else { setLog('✗ [' + seqName + '] 失败：' + res.err, true); }
+        if (res.stopped) { setLog('⏹ 已停止（用户中止）', 'warn'); break; }
+        if (res.ok) { doneSeq++; setLog('✓ [' + seqName + '] 全部完成', 'success'); }
+        else {
+          setLog('✗ [' + seqName + '] 失败：' + res.err, 'error');
+          // 失败时记录该序列未完成的所有启用版本
+          var outsF = buildOutputs(seqName);
+          evs.forEach(function (v, i) {
+            manifest.push({ seq: seqName, version: v.name, status: '失败', file: outsF[i] ? path.join(outsF[i].dir, outsF[i].file) : '', dir: outsF[i] ? outsF[i].dir : '', size: '', duration: '' });
+          });
+        }
       }
 
       if (stopRequested) {
-        setLog('════ 任务已停止：完成 ' + doneSeq + ' / ' + totalSeq + ' ════');
+        setLog('════ 任务已停止：完成 ' + doneSeq + ' / ' + totalSeq + ' ════', 'warn');
+        if (chkManifest.checked) writeManifest(manifest);
       } else {
         setProgress(100, '全部完成', (Date.now() - startTime) / 1000, 0);
-        setLog('════ 批量结束：成功 ' + doneSeq + ' / 失败 ' + (totalSeq - doneSeq) + ' ════');
-        setLog('字幕 srt 请用快捷键（全选序列 → 文件 → 导出 → 字幕）手动导出');
+        var allOk = (doneSeq === totalSeq && totalSeq > 0);
+        setLog('════ 批量结束：成功 ' + doneSeq + ' / 失败 ' + (totalSeq - doneSeq) + ' ════', allOk ? 'success' : 'warn');
+        if (chkManifest.checked) writeManifest(manifest);
       }
     } catch (e) {
-      setLog('流程中断：' + e.message, true);
+      setLog('流程中断：' + e.message, 'error');
       try { await evalHost('meUnmuteAll()'); } catch (_) {}
     } finally {
       setBusy(false);
     }
+  }
+
+  // ── 交付结构自动填充 ────────────────────────
+  // 扫描根目录下的子文件夹，按数字前缀 + 名称关键词匹配到各版本和字幕目录
+  function autofillFromRoot() {
+    var root = (deliveryRoot.value || '').trim();
+    if (!root || !fs.existsSync(root)) { setLog('交付根目录不存在：' + root, true); return; }
+    var subs = [];
+    try {
+      subs = fs.readdirSync(root, { withFileTypes: true })
+        .filter(function (d) { return d.isDirectory(); })
+        .map(function (d) { return d.name; });
+    } catch (e) { setLog('读取根目录失败：' + e.message, true); return; }
+
+    // 数字前缀提取："1.有音乐无字幕版本" -> {n:1, name}
+    function prefixOf(name) {
+      var m = name.match(/^(\d+)\s*[.、_\-]?/);
+      return m ? parseInt(m[1], 10) : null;
+    }
+
+    // 按数字前缀匹配版本（folderKey），数字对不上时用名称关键词兜底
+    function keyOf(v) {
+      return v.folderKey || inferFolderKey(v.name);
+    }
+    var matched = 0;
+    versions.forEach(function (v) {
+      var key = keyOf(v);
+      var hit = null;
+      if (key) {
+        var want = parseInt(key, 10);
+        if (!isNaN(want)) hit = subs.find(function (s) { return prefixOf(s) === want; });
+      }
+      // 兜底：名称关键词
+      if (!hit) {
+        var kw = '';
+        if (v.name.indexOf('无音乐') >= 0 || /bgm/i.test(v.name)) kw = '无音乐';
+        else if (v.name.indexOf('无字幕') >= 0) kw = '无字幕';
+        else if (v.name.indexOf('成片') >= 0) kw = '成片';
+        if (kw) hit = subs.find(function (s) { return s.indexOf(kw) >= 0; });
+      }
+      if (hit) {
+        v.outDir = path.join(root, hit);
+        matched++;
+      }
+    });
+
+    // 字幕目录：优先数字前缀 3，其次名称含「字幕」
+    var srtHit = subs.find(function (s) { return prefixOf(s) === 3; });
+    if (!srtHit) srtHit = subs.find(function (s) { return s.indexOf('字幕') >= 0; });
+    if (srtHit) {
+      subtitleDir.value = path.join(root, srtHit);
+    }
+
+    saveVersions();
+    renderVersions();
+    setDeliveryRoot(root);
+    setLog('已从 ' + root + ' 填充 ' + matched + ' 个版本路径' + (srtHit ? ' + 字幕目录' : ''), matched > 0 ? 'success' : 'warn');
   }
 
   // ── 事件绑定 ──────────────────────────────────
@@ -613,6 +874,23 @@
   });
 
   btnAddVersion.addEventListener('click', addVersion);
+
+  btnBrowseRoot.addEventListener('click', function () {
+    browseFolder(deliveryRoot, function (p) { setDeliveryRoot(p); });
+  });
+  btnAutofill.addEventListener('click', autofillFromRoot);
+  btnBrowseSubtitle.addEventListener('click', function () {
+    browseFolder(subtitleDir, function (p) {
+      var cfg = getSubtitleCfg(); cfg.dir = p; setSubtitleCfg(cfg);
+    });
+  });
+  chkManifest.addEventListener('change', function () { setManifestCfg(chkManifest.checked); });
+  chkSubtitle.addEventListener('change', function () {
+    var cfg = getSubtitleCfg(); cfg.enabled = chkSubtitle.checked; setSubtitleCfg(cfg);
+  });
+  subtitleDir.addEventListener('input', function () {
+    var cfg = getSubtitleCfg(); cfg.dir = subtitleDir.value; setSubtitleCfg(cfg);
+  });
 
   btnRefresh.addEventListener('click', async function () {
     refreshPresets();
@@ -670,6 +948,12 @@
   (async function () {
     refreshPresets();
     versions = loadVersions();
+    // 恢复交付根目录 / 字幕 / 清单开关
+    deliveryRoot.value = getDeliveryRoot();
+    var scfg = getSubtitleCfg();
+    chkSubtitle.checked = (scfg.enabled !== false);
+    subtitleDir.value = scfg.dir || '';
+    chkManifest.checked = getManifestCfg();
     try { await refreshSequences(); } catch (_) {}
     try { await refreshAudioTracks(); } catch (_) { renderVersions(); }
     var v = await evalHost('meVersion()');

@@ -14,9 +14,14 @@
     body {
       font: 13px/1.5 "Microsoft YaHei", "Segoe UI", sans-serif;
       background: var(--bg); color: var(--fg);
-      padding: 12px; user-select: none;
+      padding: 0 12px 12px; user-select: none;
     }
-    .header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .header {
+      position: sticky; top: 0; z-index: 10;
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 0; margin-bottom: 10px;
+      background: var(--bg);
+    }
     .header h1 { font-size: 14px; font-weight: 600; }
     .header .ver { color: var(--dim); font-size: 11px; }
     .dot { width: 9px; height: 9px; border-radius: 50%; background: #555; flex: 0 0 auto; }
@@ -83,6 +88,10 @@
     }
     .dir-row button:hover { background: #3a3a3e; }
 
+    .flabel { display: block; font-size: 11px; color: var(--dim); margin: 6px 0 2px; }
+    .chk-line { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg); cursor: pointer; margin-top: 4px; }
+    .chk-line input { width: auto; margin: 0; }
+
     .keep-list {
       border: 1px solid var(--border); border-radius: 5px;
       background: var(--bg2); max-height: 90px; overflow-y: auto; padding: 4px;
@@ -126,7 +135,11 @@
       white-space: pre-wrap; word-break: break-all;
     }
     .log-line { color: var(--dim); }
-    .log-line.err { color: var(--err); }
+    .log-ts { color: #6a6a6a; }
+    .log-line.info .log-body { color: var(--dim); }
+    .log-line.success .log-body { color: #5fce6f; }
+    .log-line.warn .log-body { color: #ffb84d; }
+    .log-line.error .log-body { color: var(--err); }
   </style>
 </head>
 <body>
@@ -146,9 +159,36 @@
   </div>
 
   <div class="group">
+    <div class="group-title"><span>交付结构</span><span>选中 000交付 根目录，一键填充各版本路径</span></div>
+    <label class="flabel">交付根目录</label>
+    <div class="dir-row">
+      <input type="text" id="delivery-root" placeholder="例如 C:\\Users\\Admin\\Desktop\\000交付">
+      <button type="button" id="btn-browse-root">浏览…</button>
+    </div>
+    <div class="mini-btns">
+      <button id="btn-autofill">自动填充各版本路径</button>
+    </div>
+    <label class="chk-line" style="margin-top:8px;">
+      <input type="checkbox" id="chk-manifest"> 生成交付清单（CSV）
+    </label>
+  </div>
+
+  <div class="group">
     <div class="group-title"><span>交付版本</span><span>勾选「启用」才参与导出</span></div>
     <div id="versions-wrap"></div>
     <button id="btn-add-version" class="btn-add">＋ 添加版本</button>
+  </div>
+
+  <div class="group">
+    <div class="group-title"><span>字幕</span><span>由「无字幕」版本的预设产生 sidecar 字幕</span></div>
+    <label class="chk-line">
+      <input type="checkbox" id="chk-subtitle"> 导出字幕 srt（自动改名并归位）
+    </label>
+    <label class="flabel">字幕输出目录</label>
+    <div class="dir-row">
+      <input type="text" id="subtitle-dir" placeholder="例如 C:\\...\\000交付\\3.字幕文件">
+      <button type="button" id="btn-browse-subtitle">浏览…</button>
+    </div>
   </div>
 
   <div class="progress-area" id="progress-area">

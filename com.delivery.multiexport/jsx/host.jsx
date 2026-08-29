@@ -1,6 +1,6 @@
 // ============================================================
 // 多版本交付导出 —— 宿主脚本（Premiere Pro 内执行）
-// 版本 3.2.0
+// 版本 3.3.0
 // 依赖：PR 14.0+（原生 JSON 可用）
 //
 // 核心 API（已验证 / 来自 Premiere Pro Scripting Guide）：
@@ -10,7 +10,7 @@
 //   track.name            音轨名称（只读）
 // ============================================================
 
-function meVersion() { return "3.2.0"; }
+function meVersion() { return "3.3.0"; }
 
 // 列出项目里所有序列
 function meListSequences() {
@@ -107,5 +107,23 @@ function meExport(outputPath, presetPath, exportType) {
         var ok = s.exportAsMediaDirect(output.fsName, preset.fsName, exportType || 0);
         if (!ok) return "ERR:exportAsMediaDirect 返回失败";
         return "OK:" + output.fsName;
+    } catch (e) { return "ERR:" + e; }
+}
+
+// 获取活动序列的时长（秒）与帧尺寸，供交付清单使用
+function meSeqInfo() {
+    try {
+        var s = app.project.activeSequence;
+        if (!s) return "ERR:没有活动序列";
+        var dur = 0, w = 0, h = 0;
+        try { w = s.frameSizeHorizontal; } catch (_) {}
+        try { h = s.frameSizeVertical; } catch (_) {}
+        try {
+            var ticksPerSec = 254016000000;
+            var endTicks = parseFloat(s.end);
+            var zeroTicks = parseFloat(s.zeroPoint);
+            if (!isNaN(endTicks) && !isNaN(zeroTicks)) dur = (endTicks - zeroTicks) / ticksPerSec;
+        } catch (_) {}
+        return "OK:" + JSON.stringify({ durationSec: Math.round(dur * 100) / 100, width: w, height: h });
     } catch (e) { return "ERR:" + e; }
 }
